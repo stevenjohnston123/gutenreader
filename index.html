@@ -124,8 +124,14 @@
 <script>
     // --- 1. CONFIGURATION ---
     const availableBooks = [
-        { title: "The Entire Original Maupassant Short Stories", filename: "books/The Entire Original Maupassant Short Stories _ Project Gutenberg.html" }
-        // Add more books here...
+            {
+        title: "The Entire Original Maupassant Short Stories",
+        filename: "maupassant1.json"
+    },
+    {
+        title: "The Entire Original Maupassant Short Stories Vol 4",
+        filename: "maupassant3.json"
+    }
     ];
 
     let isReading = false;
@@ -192,81 +198,203 @@
         window.history.replaceState(null, '', newUrl);
     }
 
-    // --- 4. BOOK LOADING & PARSING ---
-    async function loadSelectedBook(resetPosition = true) {
-        stopSpeech();
-        const contentDiv = document.getElementById('content');
-        contentDiv.innerHTML = '<h2 class="loading">Loading book...</h2>';
-        
-        const bookIdx = document.getElementById('book-select').value;
-        const filename = availableBooks[bookIdx].filename;
-        
-        try {
-            const response = await fetch(filename);
-            if (!response.ok) throw new Error("File not found");
-            const htmlText = await response.text();
-            
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(htmlText, 'text/html');
-            
-            // Strip Gutenberg Boilerplate
-            let isContent = false;
-            let finalHtml = '';
-            const bodyChildren = Array.from(doc.body.children);
-            
-            for (let child of bodyChildren) {
-                if (child.id === 'pg-footer' || child.querySelector('#pg-end-separator') || child.id === 'pg-end-separator') break;
-                if (isContent) finalHtml += child.outerHTML;
-                if (child.id === 'pg-header' || child.querySelector('#pg-start-separator') || child.id === 'pg-start-separator') isContent = true;
-            }
-            
-            if (!isContent) finalHtml = doc.body.innerHTML;
+    function buildElement(el, item) {
 
-            contentDiv.innerHTML = finalHtml;
-            setupReadableElements();
-            interceptLinks();
-            setupScrollTracking();
+        // No hyperlinks? Simple case.
+        if (!item.links || item.links.length === 0) {
+            el.textContent = item.text || "";
+            return;
+        }
 
-            if (resetPosition) {
-                currentElementIndex = 0;
-                updateURLState(0);
-                window.scrollTo(0, 0);
-            } else {
-                const urlParams = new URLSearchParams(window.location.search);
-                const p = parseInt(urlParams.get('p')) || 0;
-                currentElementIndex = p;
-                if (readableElements[p]) {
-                    readableElements[p].scrollIntoView({ behavior: 'auto', block: 'center' });
-                }
+        let remaining = item.text;
+
+        for (const link of item.links) {
+
+            const idx = remaining.indexOf(link.text);
+
+            if (idx < 0)
+                continue;
+
+            // text before link
+            if (idx > 0) {
+                el.appendChild(
+                    document.createTextNode(remaining.substring(0, idx))
+                );
             }
-        } catch (err) {
-            contentDiv.innerHTML = `<h2 class="loading" style="color:var(--danger)">Error loading book: ${err.message}</h2>`;
+
+            const a = document.createElement("a");
+            a.href = link.href;
+            a.textContent = link.text;
+
+            // Internal page links
+            if (link.href.startsWith("#")) {
+
+                a.onclick = function(e) {
+                    e.preventDefault();
+
+                    const target = document.getElementById(link.href.substring(1));
+
+                    if (target) {
+                        target.scrollIntoView({
+                            behavior: "smooth",
+                            block: "start"
+                        });
+                    }
+                };
+            }
+
+            el.appendChild(a);
+
+            remaining = remaining.substring(idx + link.text.length);
+        }
+
+        if (remaining.length) {
+            el.appendChild(document.createTextNode(remaining));
         }
     }
 
-    function setupReadableElements() {
-        const contentDiv = document.getElementById('content');
-        readableElements = [];
-        
-        contentDiv.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote').forEach((el) => {
-            // Filter 1: Exclude standard TOC containers
-            if (el.closest('.toc') || el.closest('.TOC') || el.closest('#toc') || el.closest('#TOC')) return;
-            
-            // Filter 2: Heuristic to exclude elements that are mostly just hyperlinks (common in un-classed TOCs)
-            const links = el.querySelectorAll('a');
-            if (links.length > 0) {
-                let totalLinkText = Array.from(links).map(a => a.innerText.trim()).join('');
-                if (totalLinkText.length > 0 && totalLinkText.length >= el.innerText.trim().length - 5) {
-                    return; // Skip this element, it's just a TOC link
+   async function loadSelectedBook(resetPosition = true) {
+    stopSpeech();
+
+    const contentDiv = document.getElementById('content');
+    contentDiv.innerHTML =
+        '<h2 class="loading">Loading book...</h2>';
+
+    const bookIdx = document.getElementById('book-select').value;
+    const filename = availableBooks[bookIdx].filename;
+
+    try {
+        const response = await fetch(filename);
+        if (!response.ok) throw new Error("File not found");
+
+        const json = await response.json();
+
+        contentDiv.innerHTML =
+            '<h2 class="loading">Preparing document...</h2>';
+
+        setTimeout(() => {
+
+            for (const item of json) {
+
+                const tag = (item.tag || "p").toLowerCase();
+
+                const allowed = [
+                    "h1","h2","h3","h4","h5","h6",
+                    "p","blockquote","li","hr"
+                ];
+
+                const el = document.createElement(
+                    allowed.includes(tag) ? tag : "p"
+                );
+
+                // Preserve ids so hyperlinks have targets
+                if (item.id)
+                    el.id = item.id;
+
+                if (tag === "hr") {
+                    contentDiv.appendChild(el);
+                    continue;
                 }
+
+                buildElement(el, item);
+
+                contentDiv.appendChild(el);
             }
 
-            if (el.innerText.trim().length > 1) {
-                el.classList.add('readable');
-                el.id = 'p-' + readableElements.length;
-                readableElements.push(el);
+            setupReadableElementsAsync(resetPosition);
+
+        }, 50);
+
+    } catch(err) {
+
+        contentDiv.innerHTML =
+            `<h2 class="loading" style="color:var(--danger)">
+                Error loading book: ${err.message}
+             </h2>`;
+    }
+}
+
+    function setupReadableElementsAsync(resetPosition) {
+        const contentDiv = document.getElementById('content');
+        const allCandidates = contentDiv.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote');
+        readableElements = [];
+        
+        if (scrollObserver) scrollObserver.disconnect();
+        
+        // Setup observer once
+        scrollObserver = new IntersectionObserver((entries) => {
+            if (isReading) return; 
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const index = parseInt(entry.target.id.split('-')[1]);
+                    currentElementIndex = index;
+                    updateURLState(index);
+                }
+            });
+        }, { rootMargin: '-30% 0px -60% 0px' }); 
+
+        let i = 0;
+        const CHUNK_SIZE = 150; // Process 150 elements per frame
+        
+        // Create a temporary loading indicator at the top
+        const progressTarget = document.createElement('div');
+        progressTarget.className = 'loading';
+        contentDiv.prepend(progressTarget);
+
+        function processChunk() {
+            const end = Math.min(i + CHUNK_SIZE, allCandidates.length);
+            
+            for (; i < end; i++) {
+                const el = allCandidates[i];
+                
+                if (el.closest('.toc') || el.closest('.TOC') || el.closest('#toc') || el.closest('#TOC')) continue;
+                
+                const links = el.querySelectorAll('a');
+                if (links.length > 0) {
+                    let totalLinkText = Array.from(links).map(a => a.innerText.trim()).join('');
+                    if (totalLinkText.length > 0 && totalLinkText.length >= el.innerText.trim().length - 5) {
+                        continue; 
+                    }
+                }
+
+                if (el.innerText.trim().length > 1) {
+                    el.classList.add('readable');
+                    el.id = 'p-' + readableElements.length;
+                    readableElements.push(el);
+                    scrollObserver.observe(el); // Attach observer during the chunk
+                }
             }
-        });
+            
+            progressTarget.innerText = `Preparing text: ${Math.round((i / allCandidates.length) * 100)}%`;
+
+            if (i < allCandidates.length) {
+                // Yield to the browser, then process the next chunk
+                requestAnimationFrame(processChunk);
+            } else {
+                // Finished!
+                progressTarget.remove();
+                interceptLinks();
+                finalizeLoading(resetPosition);
+            }
+        }
+        
+        // Start processing
+        requestAnimationFrame(processChunk);
+    }
+
+    function finalizeLoading(resetPosition) {
+        if (resetPosition) {
+            currentElementIndex = 0;
+            updateURLState(0);
+            window.scrollTo(0, 0);
+        } else {
+            const urlParams = new URLSearchParams(window.location.search);
+            const p = parseInt(urlParams.get('p')) || 0;
+            currentElementIndex = p;
+            if (readableElements[p]) {
+                readableElements[p].scrollIntoView({ behavior: 'auto', block: 'center' });
+            }
+        }
     }
 
     function interceptLinks() {
