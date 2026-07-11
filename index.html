@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Gutenberg Reader</title>
+    <style>
+        :root { 
+            --primary: #000;
+            --success: #28a745;
+            --danger: #dc3545;
+            --bg: #f4f7f6; 
+            --highlight: #fff9c4; 
+            --header-height: 110px; 
+            --footer-height: 60px;
+            --link: #0645ad;
+        }
+        
+        html, body { 
+            margin: 0; padding: 0; background: var(--bg); 
+            -webkit-text-size-adjust: 100%; overflow-x: hidden;
+        }
+        body { 
+            font-family: sans-serif, system-ui, -apple-system; 
+            line-height: 1.6; max-width: 1000px; margin: 0 auto; color: var(--primary); 
+        }
+        
+        /* Header & Controls */
+        .header-anchor { 
+            position: fixed; top: 0; left: 0; right: 0; 
+            background: var(--bg); padding: 10px 15px; 
+            z-index: 9999; border-bottom: 1px solid rgba(0,0,0,0.1); 
+        }
+        .controls-wrapper { max-width: 800px; margin: 0 auto; }
+        .controls { 
+            background: white; padding: 10px; border-radius: 12px; 
+            border: 1px solid #ddd; display: flex; flex-direction: column; 
+            gap: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); 
+        }
+        .row { display: flex; gap: 8px; align-items: center; }
+        
+        select { 
+            flex: 1; padding: 8px; border: 1px solid #ccc; 
+            border-radius: 8px; font-size: 0.9rem; background: #fafafa; 
+        }
+        #voice-select { flex: 0.7; }
+        
+        .media-btns { display: flex; width: 100%; gap: 2px; border-radius: 8px; overflow: hidden; }
+        .icon-btn { 
+            flex: 1; height: 45px; display: flex; align-items: center; justify-content: center; 
+            border: none; background: #e0e0e0; cursor: pointer; font-size: 1.2rem; transition: background 0.2s; 
+        }
+        .icon-btn:active { background: #d0d0d0; }
+        .icon-btn.play-toggle { background: var(--success); color: white; }
+        .icon-btn.play-toggle.playing { background: var(--danger); }
+
+        /* Main Content */
+        #content { 
+            background: white; padding: 20px; 
+            margin: calc(var(--header-height) + 20px) 15px calc(var(--footer-height) + 40px) 15px; 
+            border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); min-height: 100vh; 
+        }
+
+        .readable { 
+            scroll-margin-top: calc(var(--header-height) + 20px); 
+            border-radius: 4px; padding: 2px 4px; display: block; background: white; 
+            transition: background 0.3s ease;
+        }
+        .reading-highlight { 
+            background-color: var(--highlight) !important; 
+            box-shadow: 0 0 0 2px var(--highlight); 
+        }
+        
+        a { color: var(--link); text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        blockquote { border-left: 4px solid #ddd; padding-left: 15px; color: #555; }
+        hr { border: none; border-top: 1px solid #eee; margin: 2em 0; }
+
+        /* Footer */
+        .footer-anchor { 
+            position: fixed; bottom: 0; left: 0; right: 0; background: #fff; 
+            padding: 10px 15px; z-index: 9999; border-top: 1px solid rgba(0,0,0,0.1); 
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.05); 
+        }
+        .footer-controls { display: flex; justify-content: center; max-width: 800px; margin: 0 auto; }
+        .footer-btn { 
+            padding: 10px 20px; border-radius: 8px; border: 1px solid #ddd; 
+            background: #f8f9fa; cursor: pointer; display: flex; align-items: center; 
+            justify-content: center; font-size: 1rem; font-weight: bold; width: auto; /* Fixed Width */
+        }
+        .footer-btn:active { background: #e9ecef; }
+        
+        .loading { text-align: center; font-style: italic; color: #888; }
+    </style>
+</head>
+<body>
+
+<div class="header-anchor">
+    <div class="controls-wrapper">
+        <div class="controls">
+            <div class="row">
+                <select id="book-select" onchange="loadSelectedBook()"></select>
+                <select id="voice-select" onchange="updateURLState()"></select>
+            </div>
+            <div class="media-btns">
+                <button class="icon-btn" onclick="navSegment(-1)">⏮</button>
+                <button id="play-btn" class="icon-btn play-toggle" onclick="toggleSpeech()">▶</button>
+                <button class="icon-btn" onclick="navSegment(1)">⏭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<article id="content">
+    <h2 class="loading">Select a book to begin...</h2>
+</article>
+
+<div class="footer-anchor">
+    <div class="footer-controls">
+        <button class="footer-btn" onclick="jumpToTOC()">📋 Table of Contents</button>
+    </div>
+</div>
+
+<script>
+    // --- 1. CONFIGURATION ---
+    const availableBooks = [
+        { title: "The Entire Original Maupassant Short Stories", filename: "books/The Entire Original Maupassant Short Stories _ Project Gutenberg.html" }
+        // Add more books here...
+    ];
+
+    let isReading = false;
+    let isManualNav = false; // Prevents race conditions during skips
+    let currentElementIndex = 0;
+    let readableElements = [];
+    let scrollObserver = null;
+
+    // --- 2. INITIALIZATION ---
+    function init() {
+        populateBookSelect();
+        initVoices();
+        
+        if (speechSynthesis.onvoiceschanged !== undefined) {
+            speechSynthesis.onvoiceschanged = initVoices;
+        }
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const bookIdx = urlParams.get('b') || 0;
+        document.getElementById('book-select').value = bookIdx;
+        
+        if (availableBooks.length > 0) {
+            loadSelectedBook(false); 
+        }
+    }
+
+    function populateBookSelect() {
+        const select = document.getElementById('book-select');
+        select.innerHTML = '';
+        availableBooks.forEach((book, i) => {
+            const opt = document.createElement('option');
+            opt.value = i;
+            opt.textContent = book.title;
+            select.appendChild(opt);
+        });
+    }
+
+    function initVoices() {
+        const voiceSelect = document.getElementById('voice-select');
+        const voices = window.speechSynthesis.getVoices().filter(v => v.lang.startsWith('en'));
+        const urlParams = new URLSearchParams(window.location.search);
+        const savedVoice = urlParams.get('v');
+
+        voiceSelect.innerHTML = '';
+        voices.forEach(voice => {
+            const opt = document.createElement('option');
+            opt.value = voice.name;
+            opt.textContent = voice.name;
+            
+            if (savedVoice) {
+                if (voice.name === savedVoice) opt.selected = true;
+            } else if (voice.name.includes("Daniel") || voice.name.includes("Google US English")) {
+                opt.selected = true;
+            }
+            voiceSelect.appendChild(opt);
+        });
+    }
+
+    // --- 3. URL STATE MANAGEMENT ---
+    function updateURLState(paraIndex = currentElementIndex) {
+        const b = document.getElementById('book-select').value;
+        const v = document.getElementById('voice-select').value;
+        const newUrl = `${window.location.pathname}?b=${encodeURIComponent(b)}&v=${encodeURIComponent(v)}&p=${paraIndex}`;
+        window.history.replaceState(null, '', newUrl);
+    }
+
+    // --- 4. BOOK LOADING & PARSING ---
+    async function loadSelectedBook(resetPosition = true) {
+        stopSpeech();
+        const contentDiv = document.getElementById('content');
+        contentDiv.innerHTML = '<h2 class="loading">Loading book...</h2>';
+        
+        const bookIdx = document.getElementById('book-select').value;
+        const filename = availableBooks[bookIdx].filename;
+        
+        try {
+            const response = await fetch(filename);
+            if (!response.ok) throw new Error("File not found");
+            const htmlText = await response.text();
+            
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(htmlText, 'text/html');
+            
+            // Strip Gutenberg Boilerplate
+            let isContent = false;
+            let finalHtml = '';
+            const bodyChildren = Array.from(doc.body.children);
+            
+            for (let child of bodyChildren) {
+                if (child.id === 'pg-footer' || child.querySelector('#pg-end-separator') || child.id === 'pg-end-separator') break;
+                if (isContent) finalHtml += child.outerHTML;
+                if (child.id === 'pg-header' || child.querySelector('#pg-start-separator') || child.id === 'pg-start-separator') isContent = true;
+            }
+            
+            if (!isContent) finalHtml = doc.body.innerHTML;
+
+            contentDiv.innerHTML = finalHtml;
+            setupReadableElements();
+            interceptLinks();
+            setupScrollTracking();
+
+            if (resetPosition) {
+                currentElementIndex = 0;
+                updateURLState(0);
+                window.scrollTo(0, 0);
+            } else {
+                const urlParams = new URLSearchParams(window.location.search);
+                const p = parseInt(urlParams.get('p')) || 0;
+                currentElementIndex = p;
+                if (readableElements[p]) {
+                    readableElements[p].scrollIntoView({ behavior: 'auto', block: 'center' });
+                }
+            }
+        } catch (err) {
+            contentDiv.innerHTML = `<h2 class="loading" style="color:var(--danger)">Error loading book: ${err.message}</h2>`;
+        }
+    }
+
+    function setupReadableElements() {
+        const contentDiv = document.getElementById('content');
+        readableElements = [];
+        
+        contentDiv.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, blockquote').forEach((el) => {
+            // Filter 1: Exclude standard TOC containers
+            if (el.closest('.toc') || el.closest('.TOC') || el.closest('#toc') || el.closest('#TOC')) return;
+            
+            // Filter 2: Heuristic to exclude elements that are mostly just hyperlinks (common in un-classed TOCs)
+            const links = el.querySelectorAll('a');
+            if (links.length > 0) {
+                let totalLinkText = Array.from(links).map(a => a.innerText.trim()).join('');
+                if (totalLinkText.length > 0 && totalLinkText.length >= el.innerText.trim().length - 5) {
+                    return; // Skip this element, it's just a TOC link
+                }
+            }
+
+            if (el.innerText.trim().length > 1) {
+                el.classList.add('readable');
+                el.id = 'p-' + readableElements.length;
+                readableElements.push(el);
+            }
+        });
+    }
+
+    function interceptLinks() {
+        document.querySelectorAll('#content a').forEach(a => {
+            a.addEventListener('click', (e) => {
+                const href = a.getAttribute('href');
+                if (!href) return;
+                
+                // If the link contains a hash anywhere, it's likely an internal cross-reference
+                const hashIndex = href.indexOf('#');
+                if (hashIndex !== -1) {
+                    e.preventDefault();
+                    const targetId = href.substring(hashIndex + 1);
+                    
+                    const target = document.getElementById(targetId) || document.querySelector(`a[name="${targetId}"]`);
+                    if (target) {
+                        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        
+                        const nearestReadable = target.closest('.readable') || target.nextElementSibling?.closest('.readable');
+                        if (nearestReadable) {
+                            const newIndex = parseInt(nearestReadable.id.split('-')[1]);
+                            currentElementIndex = newIndex;
+                            updateURLState(newIndex);
+                        }
+                    }
+                } else {
+                    a.target = '_blank'; // Open actual external links in a new tab safely
+                }
+            });
+        });
+    }
+
+    function setupScrollTracking() {
+        if (scrollObserver) scrollObserver.disconnect();
+        
+        scrollObserver = new IntersectionObserver((entries) => {
+            if (isReading) return; 
+            
+            entries.forEach(entry => {
+                if (entry.isIntersecting) {
+                    const index = parseInt(entry.target.id.split('-')[1]);
+                    currentElementIndex = index;
+                    updateURLState(index);
+                }
+            });
+        }, { rootMargin: '-30% 0px -60% 0px' }); 
+
+        readableElements.forEach(el => scrollObserver.observe(el));
+    }
+
+    // --- 5. TEXT-TO-SPEECH LOGIC ---
+    function toggleSpeech() {
+        isReading ? stopSpeech() : startSpeech();
+    }
+
+    function stopSpeech() {
+        isReading = false;
+        window.speechSynthesis.cancel();
+        updateBtn(false);
+    }
+
+    function startSpeech() {
+        if (readableElements.length === 0) return;
+        
+        if (!isReading) {
+            const visibleIdx = readableElements.findIndex(el => {
+                const rect = el.getBoundingClientRect();
+                return rect.top >= 110 && rect.top <= window.innerHeight;
+            });
+            if (visibleIdx !== -1 && Math.abs(visibleIdx - currentElementIndex) > 3) {
+                currentElementIndex = visibleIdx;
+            }
+        }
+        
+        isReading = true;
+        updateBtn(true);
+        speakCurrent();
+    }
+
+    function navSegment(direction) {
+        isManualNav = true;
+        stopSpeech();
+        
+        // Timeout prevents the cancelled 'onend' event from skipping an extra paragraph
+        setTimeout(() => {
+            currentElementIndex = Math.max(0, Math.min(currentElementIndex + direction, readableElements.length - 1));
+            isManualNav = false;
+            isReading = true; 
+            updateBtn(true); 
+            speakCurrent();
+        }, 100);
+    }
+
+    function speakCurrent() {
+        if (!isReading || currentElementIndex >= readableElements.length) {
+            stopSpeech();
+            return;
+        }
+
+        if (navigator.wakeLock) navigator.wakeLock.request('screen').catch(()=>{});
+        
+        const el = readableElements[currentElementIndex];
+        
+        document.querySelectorAll('.reading-highlight').forEach(e => e.classList.remove('reading-highlight'));
+        el.classList.add('reading-highlight');
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        
+        updateURLState(currentElementIndex);
+
+        let speechText = el.innerText.replace(/\[[a-zA-Z0-9]+\]/g, ""); 
+        
+        const utterance = new SpeechSynthesisUtterance(speechText);
+        const selectedVoiceName = document.getElementById('voice-select').value;
+        const voices = window.speechSynthesis.getVoices();
+        const activeVoice = voices.find(v => v.name === selectedVoiceName);
+        if (activeVoice) utterance.voice = activeVoice;
+
+        utterance.onend = () => {
+            // Only proceed if not interrupted by manual navigation
+            if (isReading && !isManualNav) {
+                currentElementIndex++;
+                setTimeout(speakCurrent, 250); 
+            }
+        };
+        
+        utterance.onerror = (e) => {
+            console.error("Speech Synthesis Error:", e);
+            stopSpeech();
+        };
+
+        setTimeout(() => {
+            if (isReading) window.speechSynthesis.speak(utterance);
+        }, 50);
+    }
+
+    function updateBtn(playing) {
+        const btn = document.getElementById('play-btn');
+        btn.innerHTML = playing ? "⏸" : "▶";
+        btn.classList.toggle("playing", playing);
+    }
+
+    function jumpToTOC() {
+        const toc = document.querySelector('.toc') || 
+                    document.querySelector('#toc') ||
+                    document.querySelector('a[id*="toc" i]') || 
+                    document.querySelector('a[name*="toc" i]');
+        if (toc) {
+            toc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        } else {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+    }
+
+    window.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
