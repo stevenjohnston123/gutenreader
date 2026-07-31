@@ -317,14 +317,13 @@
         btn.classList.remove("playing");
     }
 
-    function startSpeech() {
+    function startSpeech(isManualNav = false) {
         if (readableElements.length === 0) return;
         
-        // Find the absolute first fully-visible element just below the 110px header
-        if (!isReading) {
+        // Only run the visibility scan if it's NOT a manual navigation
+        if (!isReading && !isManualNav) {
             const firstVisibleIdx = readableElements.findIndex(el => {
                 const rect = el.getBoundingClientRect();
-                // We check if the bottom edge is below the header + padding, and the top is on screen
                 return rect.bottom > 130 && rect.top < window.innerHeight; 
             });
             
@@ -343,8 +342,11 @@
 
     function navSegment(direction) {
         stopSpeech();
+        // Calculate the new index
         currentElementIndex = Math.max(0, Math.min(currentElementIndex + direction, readableElements.length - 1));
-        setTimeout(() => startSpeech(), 100); 
+        
+        // Pass "true" to tell startSpeech we are navigating manually
+        setTimeout(() => startSpeech(true), 100); 
     }
 
     function speakCurrent() {
