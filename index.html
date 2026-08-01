@@ -38,9 +38,10 @@
             border: 1px solid #ddd; display: flex; flex-direction: column; 
             gap: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); 
         }
-        .row { display: flex; gap: 8px; align-items: center; }
+        .row { display: flex; gap: 8px; align-items: center; max-width: 100%;}
         
         select { 
+            display: block;
             flex: 1; padding: 8px; border: 1px solid #ccc; 
             border-radius: 8px; font-size: 0.9rem; background: #fafafa; 
         }
@@ -80,6 +81,9 @@
         hr { border: none; border-top: 1px solid #eee; margin: 2em 0; }
         
         .loading { text-align: center; font-style: italic; color: #888; padding: 20px; }
+
+        #book-select { max-width: 80%; }
+        #voice-select { max-width: 20%; }
 
         /* Footer */
         .footer-anchor { 
@@ -412,12 +416,13 @@
         const activeVoice = voices.find(v => v.name === selectedVoiceName);
         if (activeVoice) utterance.voice = activeVoice;
 
+
         utterance.onend = () => {
             if (isReading) {
                 currentElementIndex++;
                 setTimeout(speakCurrent, 250); 
             }
-        };
+        };        
 
         utterance.onerror = (e) => {
             console.error("Speech Error:", e);
