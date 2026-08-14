@@ -277,7 +277,7 @@
     function setupReader(targetPara) {
         const container = document.getElementById('content-container');
 
-        const rawElements = container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li');
+        const rawElements = container.querySelectorAll('p, h1, h2, h3, h4, h5, h6, li, pre, div');
         readableElements = Array.from(rawElements).filter(el => el.innerText.trim().length > 1);
 
         if (scrollObserver) scrollObserver.disconnect();
@@ -377,7 +377,7 @@
         
         isReading = true;
         const btn = document.getElementById('play-btn');
-        btn.innerHTML = "⏸";
+        btn.innerHTML = "■";
         btn.classList.add("playing");
         
         speakCurrent();
